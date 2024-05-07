@@ -24,17 +24,27 @@ class ClimateDataProcessor:
         self.data['Year'] = self.data['Date'].dt.year
 
     def calculate_monthly_data(self):
+        self.data['Temp'] =  self.data['Temp'] - 273.15
+        self.data['Tmax'] =  self.data['Tmax'] - 273.15
+        self.data['Tmin'] =  self.data['Tmin'] - 273.15
+
+        self.data.sort_values(by=['ID', 'Date'], inplace=True)
+
         self.monthly_data = self.data.groupby(['ID', 'Year', 'Month']).agg({
             'Temp': 'mean',
             'Tmin': 'min',
             'Tmax': 'max',
             'Prec': 'sum'
         }).reset_index()
+        
         self.calculate_bioclimatic_variables()
 
     def calculate_bioclimatic_variables(self):
         # Annual temperature range
+
+        self.data.sort_values(by=['ID', 'Date'], inplace=True)
         # bio01: Average annual temperature
+
         self.monthly_data['Bio01'] = self.monthly_data['Temp']
 
         # bio02: Annual temperature range (maximum temperature of the year minus minimum temperature of the year)
@@ -66,34 +76,49 @@ class ClimateDataProcessor:
 
         # bio08: Average temperature for the month with the highest cumulative precipitation over 3 consecutive months
         # First calculate the cumulative precipitation for each month
-        self.monthly_data['cumulative_precipitation'] = self.monthly_data.groupby(['ID', 'Year'])['Prec'].cumsum()
 
-        # Find the month with the highest cumulative precipitation over 3 consecutive months
-        max_rain_month = self.monthly_data.groupby(['ID', 'Year'])['cumulative_precipitation'].rolling(window=3).max().reset_index()
+        self.rolling_data = self.data
+        self.rolling_data['cumulative_precipitation'] = self.rolling_data.groupby('ID')['Prec'].cumsum()
 
-        # Add the average temperature of the month with the highest precipitation to the data
-        self.monthly_data['Bio08'] = max_rain_month['cumulative_precipitation']
+        self.rolling_data['max_precip_3months'] = self.rolling_data.groupby('ID')['cumulative_precipitation'].transform(lambda x: x.rolling(window=3, min_periods=1).max())
+        self.final_data = self.rolling_data.drop_duplicates(subset=['ID', 'Year', 'Month'], keep='last')[['ID', 'Year', 'Month', 'max_precip_3months']]
+
+        self.monthly_data = self.monthly_data.merge(self.final_data, on=['ID', 'Year', 'Month'], how='left')
+        self.monthly_data.rename(columns={'max_precip_3months': 'Bio08'}, inplace=True)
+
 
         # bio09: Average temperature of the driest quarter
-        # Find the month with the least cumulative precipitation over 3 consecutive months
-        min_rain_month = self.monthly_data.groupby(['ID', 'Year'])['cumulative_precipitation'].rolling(window=3).min().reset_index()
+        self.rolling_data = self.data
+        self.rolling_data['cumulative_precipitation'] = self.rolling_data.groupby('ID')['Prec'].cumsum()
 
-        # Add the average temperature of the driest month to the data
-        self.monthly_data['Bio09'] = min_rain_month['cumulative_precipitation']
+        self.rolling_data['min_precip_3months'] = self.rolling_data.groupby('ID')['cumulative_precipitation'].transform(lambda x: x.rolling(window=3, min_periods=1).min())
+        self.final_data = self.rolling_data.drop_duplicates(subset=['ID', 'Year', 'Month'], keep='last')[['ID', 'Year', 'Month', 'min_precip_3months']]
+
+        self.monthly_data = self.monthly_data.merge(self.final_data, on=['ID', 'Year', 'Month'], how='left')
+        self.monthly_data.rename(columns={'min_precip_3months': 'Bio09'}, inplace=True)
 
         # bio10: Average temperature of the warmest quarter
         # Find the month with the highest average temperature over 3 consecutive months
-        max_temp_quarter = self.monthly_data.groupby(['ID', 'Year'])['Temp'].rolling(window=3).max().reset_index()
+        self.rolling_data = self.data
+        self.rolling_data['cumulative_temp'] = self.rolling_data.groupby('ID')['Temp'].cumsum()
 
-        # Add the average temperature of the warmest month to the data
-        self.monthly_data['Bio10'] = max_temp_quarter['Temp']
+        self.rolling_data['max_temp_3months'] = self.rolling_data.groupby('ID')['cumulative_temp'].transform(lambda x: x.rolling(window=3, min_periods=1).max())
+        self.final_data = self.rolling_data.drop_duplicates(subset=['ID', 'Year', 'Month'], keep='last')[['ID', 'Year', 'Month', 'max_temp_3months']]
+
+
+        self.monthly_data = self.monthly_data.merge(self.final_data, on=['ID', 'Year', 'Month'], how='left')
+        self.monthly_data.rename(columns={'max_temp_3months': 'Bio10'}, inplace=True)
 
         # bio11: Average temperature of the coldest quarter
         # Find the month with the lowest average temperature over 3 consecutive months
-        min_temp_quarter = self.monthly_data.groupby(['ID', 'Year'])['Temp'].rolling(window=3).min().reset_index()
+        self.rolling_data = self.data
+        self.rolling_data['cumulative_temp'] = self.rolling_data.groupby('ID')['Temp'].cumsum()
 
-        # Add the average temperature of the coldest month to the data
-        self.monthly_data['Bio11'] = min_temp_quarter['Temp']
+        self.rolling_data['min_temp_3months'] = self.rolling_data.groupby('ID')['cumulative_temp'].transform(lambda x: x.rolling(window=3, min_periods=1).min())
+        self.final_data = self.rolling_data.drop_duplicates(subset=['ID', 'Year', 'Month'], keep='last')[['ID', 'Year', 'Month', 'min_temp_3months']]
+
+        self.monthly_data = self.monthly_data.merge(self.final_data, on=['ID', 'Year', 'Month'], how='left')
+        self.monthly_data.rename(columns={'min_temp_3months': 'Bio11'}, inplace=True)
 
         # bio12: Annual precipitation
         annual_precipitation = self.data.groupby(['ID', 'Year'])['Prec'].sum().reset_index()
@@ -135,9 +160,11 @@ class ClimateDataProcessor:
         self.monthly_data = pd.merge(self.monthly_data, min_precipitation_coldest_quarter, on=['ID', 'Year'], suffixes=('', '_min_precipitation_coldest_quarter'))
         self.monthly_data['Bio19'] = self.monthly_data['Prec_min_precipitation_coldest_quarter']
 
+
     def export_data(self, filename):
         select_columns = ['ID', 
                         'Year', 
+                        'Month',
                         'Temp', 
                         'Tmax', 
                         'Tmin',
